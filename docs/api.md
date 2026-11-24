@@ -1,11 +1,12 @@
 # 实验室设备巡检与故障记录平台 API 接口文档
 
-> 版本：v0.1（草案）  
+> 版本：v0.2  
+> 更新日期：2026-11-24  
 > 适用项目：实验室设备巡检与故障记录平台  
 > 技术栈：FastAPI + Vue 3 + SQLite  
-> 说明：本文档由前端起草，需由成员 A、B、C 共同确认后再开始联调。  
+> 说明：已吸收 C 同学在接口讨论中的意见。  
 > 基础地址：`http://127.0.0.1:8000`  
-> 所有业务接口前缀：`/api`
+> 业务接口前缀：`/api`
 
 ---
 
@@ -15,16 +16,26 @@
 
 - 请求体：`application/json`
 - 响应体：`application/json`
-- 时间格式：ISO 8601 字符串，例如 `2026-11-23T10:30:00+08:00`
-- 本项目不要求登录，因此接口不需要鉴权。
+- 时间格式：ISO 8601 字符串，例如 `2026-11-24T10:30:00+08:00`
+- 本项目不要求登录，接口不需要鉴权。
 
-### 1.2 成功响应
+### 1.2 MVP 范围约定
+
+```text
+1. 每台设备只保留一条“当前故障记录”，不做故障历史表。
+2. 因此 device.fault_status 就是当前故障状态，不涉及“最新未解决故障”的选择。
+3. 不做分页、不做设备新增/编辑/删除、不做用户登录。
+4. 如果以后需要保留多条故障历史，再增加 faults 表，并把 device.fault_status
+   改为“最新未解决故障”的派生字段。
+```
+
+### 1.3 成功响应
 
 - 查询成功：HTTP `200`
 - 创建成功：HTTP `201`
-- 删除成功：HTTP `200` 或 `204`（本项目暂不涉及删除）
+- 更新成功：HTTP `200`
 
-### 1.3 错误响应
+### 1.4 错误响应
 
 业务错误统一返回：
 
@@ -36,14 +47,14 @@
 
 常见状态码：
 
-| 状态码 | 含义 |
-|---|---|
-| 400 | 参数不合法，例如状态枚举错误、必填字段为空 |
-| 404 | 资源不存在，例如设备 ID 不存在 |
-| 422 | 请求体字段类型错误（FastAPI 默认校验） |
-| 500 | 服务器内部错误 |
+| 状态码 | 含义 | 示例 |
+|---|---|---|
+| `422` | 参数/字段校验失败 | 非法枚举、必填字段为空、note 超长 |
+| `404` | 资源不存在 | 设备 ID 不存在 |
+| `400` | 业务规则不允许 | 没有可解决的故障却请求 resolved |
+| `500` | 服务器内部错误 | 未捕获异常 |
 
-> 前端处理建议：优先展示 `detail`；如果 `detail` 是数组，说明是 422 字段校验错误，展示“请求参数不正确”。
+> 说明：FastAPI 默认的 422 响应中 `detail` 是数组。建议后端加统一异常处理，把 422 也转成 `{"detail": "参数校验失败"}`，前端只处理字符串。
 
 ---
 
@@ -55,7 +66,8 @@
 |---|---|
 | `normal` | 正常 |
 | `fault` | 故障 |
-| `offline` | 离线/停用 |
+
+> 本 MVP 只保留 `normal` / `fault` 两种设备状态，避免和故障状态产生歧义。
 
 ### 2.2 故障状态 `device.fault_status`
 
@@ -66,6 +78,8 @@
 | `resolved` | 已解决 |
 | `null` | 当前无故障记录 |
 
+> 统一使用 `processing`，不要使用 `in_progress`。
+
 ### 2.3 巡检结果 `inspection.result`
 
 | 值 | 含义 |
@@ -73,7 +87,7 @@
 | `normal` | 正常 |
 | `abnormal` | 异常 |
 
-> 所有枚举值前后端必须保持一致，不能出现 `Pending`、`待处理`、`PROCESSING` 等混用。
+> 巡检结果统一使用 `abnormal`，不要使用 `fault`，避免和故障状态混淆。
 
 ---
 
@@ -90,13 +104,11 @@
   "status": "normal",
   "fault_status": null,
   "fault_description": null,
-  "last_inspection_at": "2026-11-23T10:00:00+08:00",
+  "last_inspection_at": "2026-11-24T10:00:00+08:00",
   "created_at": "2026-11-01T09:00:00+08:00",
-  "updated_at": "2026-11-23T10:00:00+08:00"
+  "updated_at": "2026-11-24T10:00:00+08:00"
 }
 ```
-
-字段说明：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -104,8 +116,8 @@
 | `name` | string | 设备名称 |
 | `location` | string | 存放位置 |
 | `model` | string | 设备型号 |
-| `status` | string | 设备状态：`normal` / `fault` / `offline` |
-| `fault_status` | string \| null | 故障状态：`pending` / `processing` / `resolved` / `null` |
+| `status` | string | `normal` / `fault` |
+| `fault_status` | string \| null | `pending` / `processing` / `resolved` / `null` |
 | `fault_description` | string \| null | 当前故障描述 |
 | `last_inspection_at` | string \| null | 最近一次巡检时间 |
 | `created_at` | string | 创建时间 |
@@ -119,18 +131,16 @@
   "device_id": 1,
   "result": "normal",
   "note": "运行正常，无异常声音",
-  "created_at": "2026-11-23T10:00:00+08:00"
+  "created_at": "2026-11-24T10:00:00+08:00"
 }
 ```
-
-字段说明：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` | int | 巡检记录 ID |
 | `device_id` | int | 所属设备 ID |
 | `result` | string | `normal` / `abnormal` |
-| `note` | string | 巡检备注 |
+| `note` | string | 巡检备注，1–500 字 |
 | `created_at` | string | 巡检时间 |
 
 ### 3.3 首页统计 Stats
@@ -140,10 +150,9 @@
   "total_devices": 10,
   "normal_devices": 6,
   "fault_devices": 3,
-  "offline_devices": 1,
   "pending_faults": 2,
   "processing_faults": 1,
-  "resolved_faults": 5,
+  "resolved_faults": 1,
   "total_inspections": 26
 }
 ```
@@ -159,7 +168,7 @@
 | GET | `/api/devices/{device_id}` | 设备详情 | A |
 | GET | `/api/devices/{device_id}/inspections` | 巡检记录列表 | A |
 | POST | `/api/devices/{device_id}/inspections` | 新增巡检记录 | A |
-| PATCH | `/api/devices/{device_id}/fault` | 更新故障状态 | A |
+| PATCH | `/api/devices/{device_id}/fault` | 更新当前故障状态 | A |
 | GET | `/api/stats` | 首页统计 | C |
 
 ---
@@ -180,8 +189,6 @@ GET /api/health
 }
 ```
 
-用途：前端启动时检查后端是否在线。
-
 ---
 
 ### 5.2 设备列表
@@ -194,9 +201,17 @@ GET /api/devices?keyword=&status=&fault_status=
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `keyword` | string | 否 | 按设备名称模糊搜索，忽略大小写，自动去首尾空格 |
-| `status` | string | 否 | 设备状态：`normal` / `fault` / `offline` |
+| `keyword` | string | 否 | **只按设备名称 name 模糊搜索**，忽略大小写，自动去首尾空格 |
+| `status` | string | 否 | 设备状态：`normal` / `fault` |
 | `fault_status` | string | 否 | 故障状态：`pending` / `processing` / `resolved` |
+
+规则：
+
+- `keyword` 为空时不过滤。
+- `status` 和 `fault_status` 同时传时，按 **AND** 组合。
+- 没有结果时返回 `200` 和空列表，不返回 404。
+- 非法枚举返回 `422`。
+- 默认按 `id` 升序。
 
 响应 `200`：
 
@@ -211,26 +226,20 @@ GET /api/devices?keyword=&status=&fault_status=
       "status": "normal",
       "fault_status": null,
       "fault_description": null,
-      "last_inspection_at": "2026-11-23T10:00:00+08:00",
+      "last_inspection_at": "2026-11-24T10:00:00+08:00",
       "created_at": "2026-11-01T09:00:00+08:00",
-      "updated_at": "2026-11-23T10:00:00+08:00"
+      "updated_at": "2026-11-24T10:00:00+08:00"
     }
   ],
   "total": 1
 }
 ```
 
-规则：
-
-- 默认按 `id` 升序。
-- 没有结果时返回 `items: []`、`total: 0`，不要返回 404。
-- `status` 或 `fault_status` 不在枚举内时返回 `400`。
-
 错误示例：
 
 ```json
 {
-  "detail": "status 必须是 normal、fault 或 offline"
+  "detail": "status 必须是 normal 或 fault"
 }
 ```
 
@@ -244,7 +253,7 @@ GET /api/devices/{device_id}
 
 响应 `200`：返回单个 Device 对象。
 
-不存在时返回 `404`：
+不存在返回 `404`：
 
 ```json
 {
@@ -270,7 +279,7 @@ GET /api/devices/{device_id}/inspections
       "device_id": 1,
       "result": "normal",
       "note": "运行正常，无异常声音",
-      "created_at": "2026-11-23T10:00:00+08:00"
+      "created_at": "2026-11-24T10:00:00+08:00"
     }
   ],
   "total": 1
@@ -279,9 +288,9 @@ GET /api/devices/{device_id}/inspections
 
 规则：
 
-- 按 `created_at` 倒序，最新的在前。
+- 按 `created_at` 倒序，最新在前。
 - 设备不存在返回 `404`。
-- 没有记录返回 `items: []`、`total: 0`。
+- 没有记录返回空列表。
 
 ---
 
@@ -300,33 +309,32 @@ POST /api/devices/{device_id}/inspections
 }
 ```
 
-字段说明：
-
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `result` | string | 是 | `normal` / `abnormal` |
-| `note` | string | 是 | 巡检备注，1–500 字 |
+| `note` | string | 是 | 1–500 字 |
 
-响应 `201`：
-
-```json
-{
-  "id": 10,
-  "device_id": 1,
-  "result": "normal",
-  "note": "运行正常，无异常声音",
-  "created_at": "2026-11-23T10:00:00+08:00"
-}
-```
+响应 `201`：返回新增的 Inspection 对象。
 
 业务规则：
 
-- 新增成功后，后端更新设备的 `last_inspection_at`。
-- 本项目约定：**巡检提交不自动改变故障状态**；如果巡检异常，用户再通过 5.6 更新故障状态。
-- 设备不存在返回 `404`。
-- `result` 非法、`note` 为空或过长时返回 `400`。
+1. 新增成功后，更新设备的 `last_inspection_at`。
+2. 如果 `result=abnormal`：
+   - 设备当前没有故障（`fault_status` 为 `null` 或 `resolved`）时，
+     自动创建当前故障：
+     ```text
+     fault_status = pending
+     fault_description = note
+     status = fault
+     ```
+   - 设备已有 `pending` / `processing` 故障时，**不重复创建**，保留原故障状态和描述。
+3. 如果 `result=normal`：只更新 `last_inspection_at`，不改变故障状态。
+4. 前端提交成功后，建议重新请求设备详情和巡检列表，刷新页面状态。
 
-错误示例：
+错误：
+
+- 设备不存在：`404`
+- `result` 非法、`note` 为空或超过 500 字：`422`
 
 ```json
 {
@@ -336,7 +344,7 @@ POST /api/devices/{device_id}/inspections
 
 ---
 
-### 5.6 更新故障状态
+### 5.6 更新当前故障状态
 
 ```http
 PATCH /api/devices/{device_id}/fault
@@ -351,30 +359,29 @@ PATCH /api/devices/{device_id}/fault
 }
 ```
 
-字段说明：
-
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `fault_status` | string | 是 | `pending` / `processing` / `resolved` |
 | `fault_description` | string | 否 | 故障描述，最多 500 字 |
 
-响应 `200`：返回更新后的 Device 对象。
+规则：
 
-业务规则：
+- `pending` / `processing`：
+  - 如果当前没有故障或故障已解决，创建/覆盖为当前故障；
+  - 如果已有故障，更新状态和描述；
+  - 同步 `device.status = fault`。
+- `resolved`：
+  - 如果当前有 `pending` / `processing` 故障，改为 `resolved`；
+  - 同步 `device.status = normal`；
+  - 如果当前没有故障，返回 `400`：`当前没有可解决的故障`。
+- `fault_description` 不传时保留原描述。
+- 响应 `200`：返回更新后的 Device 对象。
 
-- 更新 `fault_status` 和 `fault_description`。
-- 本项目约定：**该接口只更新故障状态，不自动修改设备 `status`**；前端分别展示设备状态和故障状态。
-- 如果希望“故障解决后设备自动变为正常”，需要全组确认后再改规则。
-- 设备不存在返回 `404`。
-- `fault_status` 非法返回 `400`。
+错误：
 
-错误示例：
-
-```json
-{
-  "detail": "fault_status 必须是 pending、processing 或 resolved"
-}
-```
+- 设备不存在：`404`
+- `fault_status` 非法：`422`
+- 没有故障却请求 `resolved`：`400`
 
 ---
 
@@ -391,24 +398,26 @@ GET /api/stats
   "total_devices": 10,
   "normal_devices": 6,
   "fault_devices": 3,
-  "offline_devices": 1,
   "pending_faults": 2,
   "processing_faults": 1,
-  "resolved_faults": 5,
+  "resolved_faults": 1,
   "total_inspections": 26
 }
 ```
 
-统计口径：
+统计口径（按 C 的约定）：
 
-- `total_devices`：设备总数
-- `normal_devices`：`status=normal` 的设备数
-- `fault_devices`：`status=fault` 的设备数
-- `offline_devices`：`status=offline` 的设备数
-- `pending_faults`：`fault_status=pending` 的设备数
-- `processing_faults`：`fault_status=processing` 的设备数
-- `resolved_faults`：`fault_status=resolved` 的设备数
-- `total_inspections`：巡检记录总数
+| 字段 | 口径 |
+|---|---|
+| `total_devices` | 全部设备数 |
+| `normal_devices` | `status=normal` 的设备数 |
+| `fault_devices` | 存在 `pending` / `processing` 故障的设备数（按设备去重） |
+| `pending_faults` | `fault_status=pending` 的故障记录数 |
+| `processing_faults` | `fault_status=processing` 的故障记录数 |
+| `resolved_faults` | `fault_status=resolved` 的故障记录数 |
+| `total_inspections` | 巡检记录总数 |
+
+> 本 MVP 中每台设备只有一条当前故障记录，所以 `fault_devices`、`pending_faults`、`processing_faults`、`resolved_faults` 都等价于对应设备数。后续如果增加故障历史表，再按“设备去重 / 故障记录数”分别统计。
 
 ---
 
@@ -419,7 +428,7 @@ GET /api/stats
 | 首页统计卡片 | `GET /api/stats` |
 | 设备列表 | `GET /api/devices` |
 | 名称搜索 | `GET /api/devices?keyword=...` |
-| 状态筛选 | `GET /api/devices?status=...` |
+| 设备状态筛选 | `GET /api/devices?status=...` |
 | 故障状态筛选 | `GET /api/devices?fault_status=...` |
 | 设备详情 | `GET /api/devices/{id}` |
 | 巡检记录列表 | `GET /api/devices/{id}/inspections` |
@@ -429,36 +438,64 @@ GET /api/stats
 
 ---
 
-## 7. 建议联调顺序
+## 7. 数据初始化与测试约定
 
-1. `GET /api/health`：确认后端能访问。
-2. `GET /api/devices`：打通设备列表。
-3. `GET /api/devices/{id}`：打通详情。
-4. `GET /api/devices/{id}/inspections`：打通巡检列表。
-5. `POST /api/devices/{id}/inspections`：打通新增巡检。
-6. `PATCH /api/devices/{id}/fault`：打通故障更新。
-7. `GET /api/stats`：打通首页统计。
-8. 最后测试错误情况：404、400、空列表、接口失败。
+### 7.1 Seed 数据
+
+- A 提供 `seed.py` 或 `seed.sql`，插入约 10 台示例设备。
+- 至少包含：
+
+```text
+3 台正常设备
+2 台待处理故障设备
+1 台处理中故障设备
+1 台已解决故障设备
+若干巡检记录
+```
+
+- 测试和联调共用 A 的 seed。
+- 测试使用临时数据库，测试结束后删除。
+- **不要提交 `*.db`、`*.sqlite`、`*.sqlite3` 文件。**
+
+### 7.2 测试覆盖
+
+C 负责至少覆盖：
+
+```text
+[ ] 设备列表空数据
+[ ] keyword 搜索无结果 -> 200 空列表
+[ ] 非法 status -> 422
+[ ] 非法 fault_status -> 422
+[ ] 设备详情 404
+[ ] 新增巡检 note 为空 -> 422
+[ ] 新增巡检 result 非法 -> 422
+[ ] 巡检 abnormal 且无故障 -> 自动 pending
+[ ] 巡检 abnormal 且已有 pending -> 不重复创建
+[ ] PATCH 非法 fault_status -> 422
+[ ] PATCH resolved -> status 变 normal
+[ ] 没有故障时 PATCH resolved -> 400
+[ ] 统计数字与 seed 数据一致
+```
+
+### 7.3 README 分工
+
+| 负责人 | 内容 |
+|---|---|
+| A | 后端启动、seed、接口说明 |
+| B | 前端启动、页面操作说明 |
+| C | 测试、验收记录、汇总 |
+
+### 7.4 联调缺陷
+
+- C 记录缺陷和复验结果。
+- A/B 修复后回填各自负责部分。
+- 每个缺陷写清楚：现象、复现步骤、期望结果、修复提交。
 
 ---
 
 ## 8. 前端开发约定
 
 ### 8.1 Vite 代理
-
-前端开发地址：
-
-```text
-http://localhost:5173
-```
-
-后端地址：
-
-```text
-http://127.0.0.1:8000
-```
-
-`vite.config.js` 建议配置：
 
 ```js
 server: {
@@ -468,9 +505,9 @@ server: {
 }
 ```
 
-这样前端请求 `/api/devices` 会被代理到后端，不需要处理 CORS。
+前端请求 `/api/...`，代理到后端。
 
-### 8.2 前端必须处理的状态
+### 8.2 必须处理的状态
 
 ```text
 loading   加载中
@@ -479,29 +516,37 @@ success   操作成功
 error     接口失败
 ```
 
-### 8.3 不要提交的文件
+### 8.3 Mock 数据
+
+- 后端未完成前，前端按本文件字段做 mock。
+- 建议 `src/api/mock.js` + `VITE_USE_MOCK=true`。
+- 后端完成后切换为真实请求，不改页面字段。
+
+### 8.4 不要提交
 
 ```text
 node_modules/
 dist/
 .env
 .idea/
+*.db
 ```
 
 ---
 
-## 9. 待全组确认的事项
+## 9. 已确认的讨论结论
 
-- [ ] 设备字段是否就是上面这些，是否需要增加 `fault_description`
-- [ ] 巡检记录是否需要记录巡检人姓名
-- [ ] 巡检结果为 `abnormal` 时，是否自动把设备标记为故障
-- [ ] 更新故障状态时，是否同步修改设备 `status`
-- [ ] 设备状态是否只保留 `normal` / `fault` / `offline`
-- [ ] 是否需要分页（当前按小数据量设计，不分页）
-- [ ] 后端端口是否使用 `8000`
-- [ ] 前端端口是否使用 `5173`
-- [ ] 初始设备数据由谁准备
-- [ ] 是否需要在首页增加“最近巡检记录”列表
+| 编号 | 结论 |
+|---|---|
+| 1 | `keyword` 只搜 `name`；空值不过滤；无结果返回 200 空列表 |
+| 2 | `status` 与 `fault_status` 同时传按 AND；非法枚举统一 422 |
+| 3 | 统计按第 5.7 节口径；MVP 一设备一条当前故障 |
+| 4 | 测试覆盖空列表、无结果、非法状态、404、note 为空、统计和状态流转 |
+| 5 | 测试/联调共用 A 的 seed；测试用临时数据库；不提交 db 文件 |
+| 6 | README 由 C 汇总，A/B 补各自部分 |
+| 7 | 联调缺陷由 C 记录和复验，A/B 修复并回填 |
+| 8 | 巡检结果用 `abnormal`，不用 `fault`；`abnormal` 且无 active 故障时自动 pending |
+| 9 | 设备列表的 `fault_status` 直接取当前故障状态；MVP 不做“最新未解决”匹配 |
 
 ---
 
@@ -509,4 +554,5 @@ dist/
 
 | 日期 | 版本 | 修改人 | 说明 |
 |---|---|---|---|
-| 2026-11-23 | v0.1 | B | 初稿，待 A/C 确认 |
+| 2026-11-23 | v0.1 | B | 初稿 |
+| 2026-11-24 | v0.2 | B | 吸收 C 的评审意见：422、统计口径、巡检异常自动 pending、测试与 README 分工 |
