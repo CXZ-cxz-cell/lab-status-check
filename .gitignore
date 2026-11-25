@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 本项目：本地数据库文件不提交
+*.db
+*.sqlite
+*.sqlite3
+
